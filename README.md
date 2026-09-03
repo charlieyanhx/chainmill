@@ -43,6 +43,17 @@ with ChainQuery("chains.db") as q:
 Re-running skips archives already ingested, so an interrupted multi-year load resumes instead of
 duplicating rows.
 
+When you outgrow SQLite, there is a door out:
+
+```python
+with ChainQuery("chains.db") as q:
+    q.to_parquet("chains.parquet")                        # one file, streamed
+    q.to_parquet("chains/", partition_by_session=True)    # Hive layout, date=YYYY-MM-DD/
+```
+
+Streamed in batches rather than loaded whole, so a multi-year store does not have to fit in
+memory. Needs `pip install chainmill[parquet]`.
+
 ## What it handles
 
 - **Vendor drift.** Headers matched case-insensitively with aliases (`iv` → `implied_volatility`,
@@ -67,8 +78,9 @@ archives are larger and compression-bound.
 | A general dataframe / warehouse layer | DuckDB, Polars, Parquet |
 | To turn a folder of vendor zips into something queryable, correctly | **chainmill** |
 
-SQLite and pandas, nothing else. It is an ingest and lookup layer, not an analytics engine and
-not a distributed system. Beyond one machine, export and point a real warehouse at it.
+SQLite and pandas, nothing else — `pyarrow` only if you export. It is an ingest and lookup layer,
+not an analytics engine and not a distributed system. Beyond one machine, `to_parquet()` and point
+a real warehouse at it.
 
 No market data is included — option-chain licences do not permit redistribution.
 
@@ -112,7 +124,7 @@ pip install -e ".[test]"
 pytest -q
 ```
 
-33 tests, no fixtures on disk — archives are synthesised in `tmp_path`. Includes an equivalence
+38 tests, no fixtures on disk — archives are synthesised in `tmp_path`. Includes an equivalence
 test asserting the parallel and in-process builds produce identical stores, which is what keeps
 the map step honest about being a pure function.
 

@@ -123,3 +123,67 @@ class QuoteStore:
 
     def connection(self) -> sqlite3.Connection:
         return self._conn
+
+    # -- export -----------------------------------------------------------
+
+    def to_parquet(self, path, partition_by_session: bool = False,
+                   batch_rows: int = 500_000) -> List[str]:
+        """Write the store out as Parquet, streaming rather than loading it whole.
+
+        The honest positioning of this package is "ingest layer, point a real
+        warehouse at it" - this is the door out. Requires `pyarrow`
+        (``pip install chainmill[parquet]``).
+
+        Args:
+            path: Output file, or output directory when partitioning.
+            partition_by_session: One file per session date instead of one file.
+            batch_rows: Rows per read batch. The store can exceed memory.
+
+        Returns:
+            The paths written.
+        """
+        try:
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+        except ImportError:  # pragma: no cover - exercised only without the extra
+            raise ImportError(
+                "to_parquet needs pyarrow: pip install chainmill[parquet]"
+            ) from None
+
+        path = Path(path)
+        written: List[str] = []
+
+        def _write(frame: pd.DataFrame, target: Path):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            pq.write_table(pa.Table.from_pandas(frame, preserve_index=False), target)
+            written.append(str(target))
+
+        if partition_by_session:
+            # Hive layout: the partition key lives in the directory name, not in
+            # the file. Leaving `date` in both makes readers see one column typed
+            # two ways (string vs dictionary) and refuse to merge the fragments.
+            for session in self.sessions():
+                frame = pd.read_sql_query(
+                    f"SELECT * FROM {TABLE} WHERE date = ?", self._conn, params=(session,)
+                ).drop(columns=["date"])
+                _write(frame, path / f"date={session}" / "part-0.parquet")
+            return written
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        writer = None
+        try:
+            for chunk in pd.read_sql_query(
+                f"SELECT * FROM {TABLE} ORDER BY date", self._conn, chunksize=batch_rows
+            ):
+                table = pa.Table.from_pandas(chunk, preserve_index=False)
+                if writer is None:
+                    writer = pq.ParquetWriter(path, table.schema)
+                writer.write_table(table)
+            if writer is None:                      # empty store
+                _write(pd.DataFrame(columns=COLUMNS), path)
+                return written
+        finally:
+            if writer is not None:
+                writer.close()
+        written.append(str(path))
+        return written

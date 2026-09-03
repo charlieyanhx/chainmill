@@ -12,6 +12,11 @@ only one of which worked end to end.
 - `BuildReport` — rows in, archives ingested/skipped/failed, and the session range.
 - Vendor header aliasing and per-archive failure isolation.
 
+- `QuoteStore.to_parquet()` / `ChainQuery.to_parquet()` — export to a single streamed file or a
+  Hive-partitioned directory, behind the `parquet` extra. When partitioning, `date` is written
+  into the directory name and dropped from the file, because carrying it in both makes readers
+  see one column typed two ways and refuse to merge the fragments.
+
 ### Fixed
 Defects carried by the extractors this replaces:
 - **The reader outlived its archive.** `pd.read_csv(handle, chunksize=...)` is lazy; it
