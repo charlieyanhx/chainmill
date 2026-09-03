@@ -73,6 +73,10 @@ class ChainQuery:
             (session_date, min_volume),
         )
 
+    def to_parquet(self, path, partition_by_session: bool = False) -> List[str]:
+        """Export the store as Parquet. See QuoteStore.to_parquet."""
+        return self._store.to_parquet(path, partition_by_session=partition_by_session)
+
     def daily_summary(self) -> pd.DataFrame:
         """Rows, contracts and total volume per session - the shape of the panel."""
         return self._frame(

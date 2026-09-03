@@ -148,3 +148,60 @@ def test_daily_summary_covers_every_session(built):
 def test_sessions_are_sorted(built):
     with ChainQuery(built) as q:
         assert q.sessions() == ["2024-01-02", "2024-01-03", "2024-01-04"]
+
+
+# --- parquet export ---------------------------------------------------------
+
+def test_export_to_a_single_parquet_file(tmp_path, built):
+    pytest.importorskip("pyarrow")
+    import pandas as pd
+    out = tmp_path / "chains.parquet"
+    with ChainQuery(built) as q:
+        written = q.to_parquet(out)
+    assert written == [str(out)] and out.exists()
+    frame = pd.read_parquet(out)
+    assert len(frame) == 60
+    assert set(frame["date"]) == {"2024-01-02", "2024-01-03", "2024-01-04"}
+
+
+def test_export_partitioned_by_session(tmp_path, built):
+    pytest.importorskip("pyarrow")
+    import pandas as pd
+    out = tmp_path / "parts"
+    with ChainQuery(built) as q:
+        written = q.to_parquet(out, partition_by_session=True)
+    assert len(written) == 3
+    frame = pd.read_parquet(out)
+    assert len(frame) == 60, "partitioned read must round-trip every row"
+    # `date` is recovered from the directory name, Hive-style
+    assert set(frame["date"].astype(str)) == {"2024-01-02", "2024-01-03", "2024-01-04"}
+
+
+def test_export_preserves_the_schema(tmp_path, built):
+    pytest.importorskip("pyarrow")
+    import pandas as pd
+    from chainmill import COLUMNS
+    out = tmp_path / "chains.parquet"
+    with ChainQuery(built) as q:
+        q.to_parquet(out)
+    assert list(pd.read_parquet(out).columns) == COLUMNS
+
+
+def test_export_streams_in_batches(tmp_path, built):
+    """batch_rows smaller than the store must still write every row - the whole
+    point is not loading a multi-year store into memory."""
+    pytest.importorskip("pyarrow")
+    import pandas as pd
+    out = tmp_path / "chains.parquet"
+    with QuoteStore(built) as s:
+        s.to_parquet(out, batch_rows=7)
+    assert len(pd.read_parquet(out)) == 60
+
+
+def test_export_of_an_empty_store(tmp_path):
+    pytest.importorskip("pyarrow")
+    import pandas as pd
+    out = tmp_path / "empty.parquet"
+    with QuoteStore(tmp_path / "empty.db") as s:
+        s.to_parquet(out)
+    assert pd.read_parquet(out).empty
